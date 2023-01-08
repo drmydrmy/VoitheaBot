@@ -1,4 +1,5 @@
 import sqlite3 as sql
+from datetime import date
 
 
 con = sql.connect("voithea_user_base.db")
@@ -56,3 +57,41 @@ def check_user_exists(user_id):
 def check_inviter_is_invited(user_id, inviter_user_id):
     inviter_user_data = get_user_data(inviter_user_id)
     return user_id == inviter_user_data['invited_by']
+
+def check_user_is_admin(user_id):
+    query = "SELECT * FROM admins WHERE user_id = ?"
+    res = cur.execute(query, (user_id,))
+    return not (res.fetchone() is None)
+
+def get_super_admin_value(user_id):
+    query = "SELECT is_super_admin FROM admins WHERE user_id = ?"
+    res = cur.execute(query, (user_id,))
+    return res.fetchone()[0]
+
+def add_order(name, executor, client, handler, system_percent, executor_cost):
+    query = "INSERT INTO orders (name, executor, client, handler, system_percent, executor_cost, inviter, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    query_to_get_inviter = "SELECT invited_by FROM users WHERE username = ?"
+    res = cur.execute(query_to_get_inviter, (client[1::],))
+    today_date = date.today()
+    str_date = today_date.strftime("%d.%m.%Y")
+    res = res.fetchone()
+    if res is None:
+        inviter = None
+    else:
+        inviter = res[0]
+    cur.execute(query, (name, executor[1::], client[1::], handler[1::], float(system_percent.replace(',', '.')), executor_cost, inviter, str_date))
+    con.commit()
+
+def get_user_id_by_username(username):
+    query = "SELECT user_id FROM users WHERE username = ?"
+    res = cur.execute(query, (username[1::],))
+    res = res.fetchone()
+    if res is None:
+        return -1
+    else:
+        return res[0]
+
+def add_admin(user_id, is_superadmin):
+    query = "INSERT OR IGNORE INTO admins VALUES (?, ?)"
+    cur.execute(query, (user_id, is_superadmin))
+    con.commit()

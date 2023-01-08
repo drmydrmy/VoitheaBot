@@ -25,6 +25,17 @@ def create_main_keyboard(user_data):
         welcome_btns_text = welcome_btns_text + ('Добавить данные для выплат',)
     else:
         welcome_btns_text = welcome_btns_text + ('Просмотреть или изменить данные для выплат',)
+    if db.check_user_is_admin(user_data['user_id']):
+        welcome_btns_text = welcome_btns_text + ('Панель администрирования',)
+    keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
+    keyboard_markup.add(*(types.KeyboardButton(text) for text in welcome_btns_text))
+    return keyboard_markup
+
+def create_admin_keyboard(user_data):
+    welcome_btns_text = ('Добавить заказ', 'Просмотреть все заказы')
+    if db.get_super_admin_value(user_data['user_id']) == 1:
+        welcome_btns_text = welcome_btns_text + ('Добавить сотрудника',)
+    welcome_btns_text = welcome_btns_text + ('Главное меню',)
     keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
     keyboard_markup.add(*(types.KeyboardButton(text) for text in welcome_btns_text))
     return keyboard_markup
@@ -45,6 +56,18 @@ class payment_change(StatesGroup):
 
 class add_inviter(StatesGroup):
     inviter = State()
+
+class add_order(StatesGroup):
+    name = State()
+    executor = State()
+    client = State()
+    handler = State()
+    system_percent = State()
+    executor_cost = State()
+
+class add_worker(StatesGroup):
+    username = State()
+    is_superadmin = State()
 
 # Start command handler
 @dp.message_handler(commands=['start'])
@@ -89,6 +112,7 @@ async def send_welcome(message: types.Message):
         # DONE Add completion message
         # DONE Check if payment information exists if no notify
         # TODO Think up an administration system
+        # TODO Additional checks on adding an order
         # Invited can't have inviter as his own invited
         # Inviter can't have an invited as his own inviter
         
@@ -119,6 +143,17 @@ async def check_inviter_data(message: types.Message):
             inviter_user_data = db.get_user_data(cur_user_data['invited_by'])
             answer_text = "Код пригласителя: " + str(inviter_user_data['user_id']) + "\n" + "Ссылка на аккаунт пригласителя: " + "@" + inviter_user_data['username']
             await message.answer(answer_text)
+
+@dp.message_handler(text = "Главное меню")
+async def show_main_menu(message: types.Message):
+    try:
+        await dp.throttle('Главное меню', rate=1)
+    except Throttled:
+        await message.reply('Вы отправляете команды слишком быстро! Подождите 1 секунду перед отправкой следующей')
+    else:
+        cur_user_data = db.get_user_data(message.from_user.id)
+        keyboard_markup = create_main_keyboard(cur_user_data)
+        await message.reply("Главное меню", reply_markup=keyboard_markup)
 
 # Cancel handler
 @dp.message_handler(state='*', commands='cancel')
@@ -309,6 +344,113 @@ async def add_inviter_correct_format(message: types.Message, state: FSMContext):
             await message.reply("Пользователь владеющий этим кодом был приглашен вами и не может быть вашим пригласителем. Введите корректный код пригласителя")
     else:
         await message.reply("Неверно введен код или пригласитель не зарегестрирован в боте. Введите корректный код пригласителя")
+
+# Administration part ------------------------------------
+
+@dp.message_handler(text = "Панель администрирования")
+async def show_admin_panel(message: types.Message):
+    if db.check_user_is_admin(message.from_user.id):
+        cur_user_data = db.get_user_data(message.from_user.id)
+        keyboard_markup = create_admin_keyboard(cur_user_data)
+        await message.reply("Добро пожаловать в админ. панель", reply_markup=keyboard_markup)
+    else:
+        await message.reply("У вас нет доступа к этой команде")
+
+@dp.message_handler(text = "Добавить заказ")
+async def add_order_command_handler(message: types.Message):
+    if db.check_user_is_admin(message.from_user.id):
+        await add_order.name.set()
+        keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
+        keyboard_markup.add(types.KeyboardButton('Отмена'))
+        await message.reply("Введите название или краткое описание заказа", reply_markup=keyboard_markup)
+    else:
+        await message.reply("У вас нет доступа к этой команде")
+
+@dp.message_handler(state=add_order.name)
+async def add_order_name_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['name'] = message.text
+    await add_order.next()
+    await message.reply("Введите имя пользователя исполнителя заказа в телеграме, в формате @DrmyDrmy")
+
+@dp.message_handler(state=add_order.executor)
+async def add_order_executor_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['executor'] = message.text
+    await add_order.next()
+    await message.reply("Введите имя пользователя клиента в телеграме, в формате @DrmyDrmy")
+
+@dp.message_handler(state=add_order.client)
+async def add_order_client_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['client'] = message.text
+    await add_order.next()
+    await message.reply("Введите свое имя пользователя в телеграме, в формате @DrmyDrmy")
+
+@dp.message_handler(state=add_order.handler)
+async def add_order_handler_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['handler'] = message.text
+    await add_order.next()
+    await message.reply("Введите процентную ставку, в формате 12,5, без знака процента")
+
+@dp.message_handler(state=add_order.system_percent)
+async def add_order_system_percent_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['system_percent'] = message.text
+    await add_order.next()
+    await message.reply("Введите оплату исполнителя, только целые числа")
+
+@dp.message_handler(state=add_order.executor_cost)
+async def add_order_executor_cost_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['executor_cost'] = message.text
+        db.add_order(data['name'], data['executor'], data['client'], data['handler'], data['system_percent'], data['executor_cost'])
+    await state.finish()
+    cur_user_data = db.get_user_data(message.from_user.id)
+    keyboard_markup = create_admin_keyboard(cur_user_data)
+    await message.reply("Заказ сохранен", reply_markup=keyboard_markup)
+
+@dp.message_handler(text = "Добавить сотрудника")
+async def add_worker_handler(message: types.Message):
+    if db.check_user_is_admin(message.from_user.id):
+        if db.get_super_admin_value(message.from_user.id) == 1:
+            await add_worker.username.set()
+            keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
+            keyboard_markup.add(types.KeyboardButton('Отмена'))
+            await message.reply("Введите имя пользователя сотрудника в телеграме, пример: @DrmyDrmy. ВНИМАНИЕ, пользователь получит доступ к админ-панели!", reply_markup=keyboard_markup)
+        else:
+            await message.reply("У вас нет доступа к этой команде")
+    else:
+        await message.reply("У вас нет доступа к этой команде")
+
+@dp.message_handler(state=add_worker.username)
+async def add_worker_username_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['user_id'] = db.get_user_id_by_username(message.text)
+    await add_worker.next()
+    await message.reply("Может ли этот сотрудник добавлять новых сотрудников? Введите 'ДА' или 'НЕТ'")
+
+@dp.message_handler(state=add_worker.is_superadmin)
+async def add_worker_username_handler(message: types.Message, state: FSMContext):
+    if message.text == "ДА" or message.text == "НЕТ":
+        cur_user_data = db.get_user_data(message.from_user.id)
+        keyboard_markup = create_admin_keyboard(cur_user_data)
+        if message.text == "ДА":
+            is_superadmin = 1
+            async with state.proxy() as data:
+                db.add_admin(data['user_id'], is_superadmin)
+            await state.finish()
+            await message.reply("Сотрудник успешно добавлен", reply_markup=keyboard_markup)
+        if message.text == "НЕТ":
+            is_superadmin = 0
+            async with state.proxy() as data:
+                db.add_admin(data['user_id'], is_superadmin)
+            await state.finish()
+            await message.reply("Сотрудник успешно добавлен", reply_markup=keyboard_markup)
+    else:
+        await message.reply("Введите 'ДА' или 'НЕТ'")
+    
 
 
 # Default handler
