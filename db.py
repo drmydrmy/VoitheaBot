@@ -95,3 +95,18 @@ def add_admin(user_id, is_superadmin):
     query = "INSERT OR IGNORE INTO admins VALUES (?, ?)"
     cur.execute(query, (user_id, is_superadmin))
     con.commit()
+
+def get_page_db_admins(limit, offset):
+    query = "SELECT * FROM admins LIMIT ? OFFSET ?"
+    res = cur.execute(query, (limit, offset))
+    res = res.fetchall()
+    if res is None:
+        return -1
+    else:
+        return res
+
+def get_count_all_rows_admins():
+    query = "SELECT COUNT(*) FROM admins"
+    res = cur.execute(query)
+    res = res.fetchone()[0]
+    return res

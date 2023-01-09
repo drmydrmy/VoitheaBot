@@ -12,6 +12,7 @@ from aiogram.utils.deep_linking import get_start_link
 
 
 API_TOKEN = '5974235292:AAGaFkMwn4j3TuQ8FfJiACRyPsu93WEwJ-E'
+ADMINS_LIMIT = 5
 
 logging.basicConfig(level=logging.INFO)
 
@@ -34,7 +35,7 @@ def create_main_keyboard(user_data):
 def create_admin_keyboard(user_data):
     welcome_btns_text = ('Добавить заказ', 'Просмотреть все заказы')
     if db.get_super_admin_value(user_data['user_id']) == 1:
-        welcome_btns_text = welcome_btns_text + ('Добавить сотрудника',)
+        welcome_btns_text = welcome_btns_text + ('Добавить сотрудника', 'Просмотреть или удалить сотрудников')
     welcome_btns_text = welcome_btns_text + ('Главное меню',)
     keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
     keyboard_markup.add(*(types.KeyboardButton(text) for text in welcome_btns_text))
@@ -112,7 +113,7 @@ async def send_welcome(message: types.Message):
         # DONE Add completion message
         # DONE Check if payment information exists if no notify
         # TODO Think up an administration system
-        # TODO Additional checks on adding an order
+        # DONE Additional checks on adding an order
         # Invited can't have inviter as his own invited
         # Inviter can't have an invited as his own inviter
         
@@ -375,41 +376,56 @@ async def add_order_name_handler(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=add_order.executor)
 async def add_order_executor_handler(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['executor'] = message.text
-    await add_order.next()
-    await message.reply("Введите имя пользователя клиента в телеграме, в формате @DrmyDrmy")
+    if message.text[0] == "@": 
+        async with state.proxy() as data:
+            data['executor'] = message.text
+        await add_order.next()
+        await message.reply("Введите имя пользователя клиента в телеграме, в формате @DrmyDrmy")
+    else:
+        await message.reply("Имя пользователя должно начинаться с '@'. Введите корректное имя пользователя")
 
 @dp.message_handler(state=add_order.client)
 async def add_order_client_handler(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['client'] = message.text
-    await add_order.next()
-    await message.reply("Введите свое имя пользователя в телеграме, в формате @DrmyDrmy")
+    if message.text[0] == "@": 
+        async with state.proxy() as data:
+            data['client'] = message.text
+        await add_order.next()
+        await message.reply("Введите свое имя пользователя в телеграме, в формате @DrmyDrmy")
+    else: 
+        await message.reply("Имя пользователя должно начинаться с '@'. Введите корректное имя пользователя")
 
 @dp.message_handler(state=add_order.handler)
 async def add_order_handler_handler(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['handler'] = message.text
-    await add_order.next()
-    await message.reply("Введите процентную ставку, в формате 12,5, без знака процента")
+    if message.text[0] == "@": 
+        async with state.proxy() as data:
+            data['handler'] = message.text
+        await add_order.next()
+        await message.reply("Введите процентную ставку, в формате 12,5, без знака процента")
+    else: 
+        await message.reply("Имя пользователя должно начинаться с '@'. Введите корректное имя пользователя")
 
 @dp.message_handler(state=add_order.system_percent)
 async def add_order_system_percent_handler(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['system_percent'] = message.text
-    await add_order.next()
-    await message.reply("Введите оплату исполнителя, только целые числа")
+    if re.fullmatch(r"[0-9]*\.[0-9]+", message.text.replace(',', '.')) or message.text.isdigit():
+        async with state.proxy() as data:
+            data['system_percent'] = message.text
+        await add_order.next()
+        await message.reply("Введите оплату исполнителя, только целые числа")
+    else:
+        await message.reply("Неверный формат. Введите процент в формате 12,5 без знака процента")
 
 @dp.message_handler(state=add_order.executor_cost)
 async def add_order_executor_cost_handler(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['executor_cost'] = message.text
-        db.add_order(data['name'], data['executor'], data['client'], data['handler'], data['system_percent'], data['executor_cost'])
-    await state.finish()
-    cur_user_data = db.get_user_data(message.from_user.id)
-    keyboard_markup = create_admin_keyboard(cur_user_data)
-    await message.reply("Заказ сохранен", reply_markup=keyboard_markup)
+    if message.text.isdigit():
+        async with state.proxy() as data:
+            data['executor_cost'] = message.text
+            db.add_order(data['name'], data['executor'], data['client'], data['handler'], data['system_percent'], data['executor_cost'])
+        await state.finish()
+        cur_user_data = db.get_user_data(message.from_user.id)
+        keyboard_markup = create_admin_keyboard(cur_user_data)
+        await message.reply("Заказ сохранен", reply_markup=keyboard_markup)
+    else:
+        await message.reply("Неверный формат ввода. Введите целое число без разделителей")
 
 @dp.message_handler(text = "Добавить сотрудника")
 async def add_worker_handler(message: types.Message):
@@ -424,12 +440,19 @@ async def add_worker_handler(message: types.Message):
     else:
         await message.reply("У вас нет доступа к этой команде")
 
-@dp.message_handler(state=add_worker.username)
-async def add_worker_username_handler(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['user_id'] = db.get_user_id_by_username(message.text)
-    await add_worker.next()
-    await message.reply("Может ли этот сотрудник добавлять новых сотрудников? Введите 'ДА' или 'НЕТ'")
+@dp.message_handler(lambda message: not (message.text[0] == '@'), state=add_worker.username)
+async def add_worker_username_incorrect_handler(message: types.Message, state: FSMContext):
+    await message.reply("Имя пользователя должно начинаться с '@'. Введите корректное имя пользователя")
+
+@dp.message_handler(lambda message: message.text[0] == '@', state=add_worker.username)
+async def add_worker_username_correct_handler(message: types.Message, state: FSMContext):
+    if db.get_user_id_by_username(message.text) != -1:
+        async with state.proxy() as data:
+            data['user_id'] = db.get_user_id_by_username(message.text)
+        await add_worker.next()
+        await message.reply("Может ли этот сотрудник добавлять новых сотрудников? Введите 'ДА' или 'НЕТ'")
+    else:
+        await message.reply(" Неверно введено имя пользователя или сотрудник не зарегистрирован в боте. Он должен нажать кнопку start или ввести команду /start для регистрации. \n Введите корректное имя пользователя")
 
 @dp.message_handler(state=add_worker.is_superadmin)
 async def add_worker_username_handler(message: types.Message, state: FSMContext):
@@ -441,17 +464,38 @@ async def add_worker_username_handler(message: types.Message, state: FSMContext)
             async with state.proxy() as data:
                 db.add_admin(data['user_id'], is_superadmin)
             await state.finish()
-            await message.reply("Сотрудник успешно добавлен", reply_markup=keyboard_markup)
+            await message.reply("Сотрудник успешно добавлен. Если админ-панель не появилась, он должен отправить /start боту", reply_markup=keyboard_markup)
         if message.text == "НЕТ":
             is_superadmin = 0
             async with state.proxy() as data:
                 db.add_admin(data['user_id'], is_superadmin)
             await state.finish()
-            await message.reply("Сотрудник успешно добавлен", reply_markup=keyboard_markup)
+            await message.reply("Сотрудник успешно добавлен. Если админ-панель не появилась, он должен отправить /start боту", reply_markup=keyboard_markup)
     else:
         await message.reply("Введите 'ДА' или 'НЕТ'")
     
+@dp.message_handler(text = 'Просмотреть или удалить сотрудников')
+async def check_worker_handler(message: types.Message):
+    row_count = db.get_count_all_rows_admins()
+    counter = 1
+    answer_text = ''
+    data = db.get_page_db_admins(ADMINS_LIMIT, 0)
+    for user in data:
+        list_user_data = db.get_user_data(user[0])
+        answer_text += '\n' + str(counter) + ". " + "@" + list_user_data['username'] + '\n'
+        counter += 1
+        inline_keyboard_markup = types.InlineKeyboardMarkup(row_width=3)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('-->', callback_data=str(ADMINS_LIMIT)))
+    if row_count <= ADMINS_LIMIT:
+        await message.answer(answer_text)
+    else:
+        await message.answer(answer_text, reply_markup=inline_keyboard_markup)
 
+@dp.callback_query_handler(text = '-->')
+async def next_page_admins_query_handler(query: types.CallbackQuery):
+    row_count = db.get_count_all_rows_admins()
+    limit = 5
+    
 
 # Default handler
 @dp.message_handler()
