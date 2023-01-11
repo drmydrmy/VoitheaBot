@@ -35,7 +35,7 @@ def create_main_keyboard(user_data):
     return keyboard_markup
 
 def create_admin_keyboard(user_data):
-    welcome_btns_text = ('Добавить заказ', 'Просмотреть все заказы')
+    welcome_btns_text = ('Добавить заказ', 'Просмотреть или удалить заказы')
     if db.get_super_admin_value(user_data['user_id']) == 1:
         welcome_btns_text = welcome_btns_text + ('Добавить сотрудника', 'Удалить сотрудника', 'Просмотреть или изменить информацию о сотрудниках')
     welcome_btns_text = welcome_btns_text + ('Главное меню',)
@@ -95,6 +95,10 @@ class delete_user(StatesGroup):
 
 class view_order(StatesGroup):
     view = State()
+
+class delete_order(StatesGroup):
+    order_id = State()
+    confirmation = State()
 
 change_page_callback = CallbackData("text", "action", "offset")
 
@@ -187,6 +191,7 @@ async def show_main_menu(message: types.Message):
 # Cancel handler
 @dp.message_handler(state='*', commands='cancel')
 @dp.message_handler(text = "Отмена", state='*')
+@dp.message_handler(text = 'НЕТ', state='*')
 async def cancel(message: types.Message, state: FSMContext):
     cur_user_data = db.get_user_data(message.from_user.id)
     current_state = await state.get_state()
@@ -670,7 +675,7 @@ async def delete_user_confirmed_handler(message: types.Message, state: FSMContex
     keyboard_markup = create_admin_keyboard(cur_user_data)
     await message.reply("Сотрудник удален.", reply_markup=keyboard_markup)
 
-@dp.message_handler(text = 'Просмотреть все заказы')
+@dp.message_handler(text = 'Просмотреть или удалить заказы')
 async def check_all_orders_handler(message: types.Message):
     if db.check_user_is_admin(message.from_user.id):
         row_count = db.get_count_all_rows_orders()
@@ -679,13 +684,18 @@ async def check_all_orders_handler(message: types.Message):
         for order in data:
             answer_text += '\n' + str(order[0]) + ". " + order[1] + '\n' + order[8] + '\n'
         inline_keyboard_markup = types.InlineKeyboardMarkup(resize_keyboard=True)
-        if row_count <= ORDERS_LIMIT:
-            inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
-            await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+        if row_count == 0:
+            await message.reply("Заказов нет")
         else:
-            inline_keyboard_markup.add(types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='forward_order')))
-            inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
-            await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+            if row_count <= ORDERS_LIMIT:
+                inline_keyboard_markup.add(types.InlineKeyboardButton('Удалить заказ', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='delete_order')))
+                inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+                await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+            else:
+                inline_keyboard_markup.add(types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='forward_order')))
+                inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+                inline_keyboard_markup.add(types.InlineKeyboardButton('Удалить заказ', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='delete_order')))
+                await message.answer(answer_text, reply_markup=inline_keyboard_markup)
     else:
         await message.reply("У вас нет доступа к этой команде")
 
@@ -703,12 +713,14 @@ async def next_page_orders_query_handler(query: types.CallbackQuery, callback_da
         buttons.append(types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=offset + ORDERS_LIMIT, action='forward_order')))
         inline_keyboard_markup.add(*buttons)
         inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Удалить заказ', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='delete_order')))
         await query.answer()
         await bot.delete_message(query.message.chat.id, query.message.message_id)
         await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
     else:
         inline_keyboard_markup.add(*buttons)
         inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Удалить заказ', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='delete_order')))
         await query.answer()
         await bot.delete_message(query.message.chat.id, query.message.message_id)
         await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
@@ -728,15 +740,51 @@ async def prev_page_orders_query_handler(query: types.CallbackQuery, callback_da
         buttons.insert(0, types.InlineKeyboardButton('<--', callback_data=change_page_callback.new(offset=offset - ORDERS_LIMIT, action='back_order')))
         inline_keyboard_markup.add(*buttons)
         inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Удалить заказ', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='delete_order')))
         await query.answer()
         await bot.delete_message(query.message.chat.id, query.message.message_id)
         await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
     else:
         inline_keyboard_markup.add(*buttons)
         inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Удалить заказ', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='delete_order')))
         await query.answer()
         await bot.delete_message(query.message.chat.id, query.message.message_id)
         await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
+
+@dp.callback_query_handler(change_page_callback.filter(action = 'delete_order'))
+async def delete_order_query_handler(query: types.CallbackQuery, callback_data : dict):
+    await query.answer()
+    await delete_order.order_id.set()
+    keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
+    keyboard_markup.add(types.KeyboardButton('Отмена'))
+    await bot.send_message(query.from_user.id, "Введите номер заказа", reply_markup=keyboard_markup)
+
+@dp.message_handler(lambda message: not (message.text.isdigit()), state=delete_order.order_id)
+async def delete_order_incorrect_handler(message: types.Message, state: FSMContext):
+    await message.reply("Номер заказа должен быть цифрой. Введите корректный номер заказа")
+
+@dp.message_handler(lambda message: message.text.isdigit(), state=delete_order.order_id)
+async def delete_order_correct_handler(message: types.Message, state: FSMContext):
+    if db.check_order_exists(int(message.text)):
+        async with state.proxy() as data:
+            data['order_id'] = int(message.text)
+        await delete_order.next()
+        await message.reply("Подтвердите удаление. Введите 'ДА' или 'НЕТ'")
+    else:
+        await message.reply('Заказа с таким номером не существует. Введите корректный номер заказа')
+
+@dp.message_handler(state=delete_order.confirmation)
+async def delete_order_confirmation_handler(message: types.Message, state: FSMContext):
+    cur_user_data = db.get_user_data(message.from_user.id)
+    if message.text == 'ДА':
+        async with state.proxy() as data:
+            db.delete_order(data['order_id'])
+        await state.finish()
+        keyboard_markup = create_admin_keyboard(cur_user_data)
+        await message.reply("Заказ удален", reply_markup=keyboard_markup)
+    else:
+        await message.reply("Введите 'ДА' или 'НЕТ'")
 
 @dp.callback_query_handler(change_page_callback.filter(action = 'view_order'))
 async def view_orders_query_handler(query: types.CallbackQuery, callback_data : dict):

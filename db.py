@@ -147,3 +147,8 @@ def get_order_data(order_id):
     res = cur.execute(query, (order_id,))
     res = res.fetchone()
     return res
+
+def delete_order(order_id):
+    query = "DELETE FROM orders WHERE id = ?"
+    cur.execute(query, (order_id,))
+    con.commit()
