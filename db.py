@@ -91,9 +91,9 @@ def get_user_id_by_username(username):
     else:
         return res[0]
 
-def add_admin(user_id, is_superadmin):
-    query = "INSERT OR IGNORE INTO admins VALUES (?, ?)"
-    cur.execute(query, (user_id, is_superadmin))
+def add_admin(user_id, is_superadmin, user_info):
+    query = "INSERT OR IGNORE INTO admins VALUES (?, ?, ?)"
+    cur.execute(query, (user_id, is_superadmin, user_info))
     con.commit()
 
 def get_page_db_admins(limit, offset):
@@ -109,4 +109,41 @@ def get_count_all_rows_admins():
     query = "SELECT COUNT(*) FROM admins"
     res = cur.execute(query)
     res = res.fetchone()[0]
+    return res
+
+def change_info_admins(user_id, user_info):
+    query = "UPDATE admins SET user_info = ? WHERE user_id = ?"
+    cur.execute(query, (user_info, user_id))
+    con.commit()
+
+def delete_admin(user_id):
+    query = "DELETE FROM admins WHERE user_id = ?"
+    cur.execute(query, (user_id,))
+    con.commit()
+
+def get_count_all_rows_orders():
+    query = "SELECT COUNT(*) FROM orders"
+    res = cur.execute(query)
+    res = res.fetchone()[0]
+    return res
+
+def get_page_db_orders(limit, offset):
+    query = "SELECT * FROM orders LIMIT ? OFFSET ?"
+    res = cur.execute(query, (limit, offset))
+    res = res.fetchall()
+    if res is None:
+        return -1
+    else:
+        return res
+
+def check_order_exists(order_id):
+    query = "SELECT * FROM orders WHERE id = ?"
+    res = cur.execute(query, (order_id,))
+    res = res.fetchone()
+    return not (res is None)
+
+def get_order_data(order_id):
+    query = "SELECT * FROM orders WHERE id = ?"
+    res = cur.execute(query, (order_id,))
+    res = res.fetchone()
     return res

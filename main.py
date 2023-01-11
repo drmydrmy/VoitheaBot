@@ -8,11 +8,13 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.utils.deep_linking import get_start_link
+from aiogram.utils.callback_data import CallbackData
 
 
 
 API_TOKEN = '5974235292:AAGaFkMwn4j3TuQ8FfJiACRyPsu93WEwJ-E'
-ADMINS_LIMIT = 5
+ADMINS_LIMIT = 6
+ORDERS_LIMIT = 4
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,11 +37,23 @@ def create_main_keyboard(user_data):
 def create_admin_keyboard(user_data):
     welcome_btns_text = ('Добавить заказ', 'Просмотреть все заказы')
     if db.get_super_admin_value(user_data['user_id']) == 1:
-        welcome_btns_text = welcome_btns_text + ('Добавить сотрудника', 'Просмотреть или удалить сотрудников')
+        welcome_btns_text = welcome_btns_text + ('Добавить сотрудника', 'Удалить сотрудника', 'Просмотреть или изменить информацию о сотрудниках')
     welcome_btns_text = welcome_btns_text + ('Главное меню',)
     keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
     keyboard_markup.add(*(types.KeyboardButton(text) for text in welcome_btns_text))
     return keyboard_markup
+
+def divide_money(sum, system_percent):
+    system_sum = sum * (system_percent / 100)
+    sum_for_boss_and_first = system_sum * (18.75 / 100)
+    inviter_sum = system_sum * (6.25 / 100)
+    others_sum = system_sum * (75 / 100)
+    sum_dict = {
+        'sum_for_boss_and_first' : sum_for_boss_and_first,
+        'inviter_sum' : inviter_sum,
+        'others_sum' : others_sum
+    }
+    return(sum_dict)
 
 # Storage for throttle control
 storage = MemoryStorage()
@@ -68,7 +82,21 @@ class add_order(StatesGroup):
 
 class add_worker(StatesGroup):
     username = State()
+    user_data = State()
     is_superadmin = State()
+
+class change_info(StatesGroup):
+    username = State()
+    info = State()
+
+class delete_user(StatesGroup):
+    username = State()
+    confirmation = State()
+
+class view_order(StatesGroup):
+    view = State()
+
+change_page_callback = CallbackData("text", "action", "offset")
 
 # Start command handler
 @dp.message_handler(commands=['start'])
@@ -202,6 +230,7 @@ async def inline_change_payment_method_handler(query: types.CallbackQuery):
     keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
     keyboard_markup.add(types.KeyboardButton('Отмена'))
     await bot.send_message(query.from_user.id, 'Укажите банк (поддерживающий СБП)', reply_markup=keyboard_markup)
+    await query.answer()
 
 # Inline KB callback handler (payment_data)
 @dp.callback_query_handler(text='payment_data')
@@ -210,6 +239,7 @@ async def inline_change_payment_data_handler(query: types.CallbackQuery):
     keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
     keyboard_markup.add(types.KeyboardButton('Отмена'))
     await bot.send_message(query.from_user.id, 'Введите данные для выплат (номер телефона начинающийся со знака + или номер карты)', reply_markup=keyboard_markup)
+    await query.answer()
 
 # Payment data change handler (INcorrect number)
 @dp.message_handler(lambda message: not ((re.fullmatch(r'([+-]?(?=\.\d|\d)(?:\d+)?(?:\.?\d*))(?:[eE]([+-]?\d+))?', message.text) or message.text.isdigit()) and len(message.text) < 90), state=payment_change.data)
@@ -450,9 +480,16 @@ async def add_worker_username_correct_handler(message: types.Message, state: FSM
         async with state.proxy() as data:
             data['user_id'] = db.get_user_id_by_username(message.text)
         await add_worker.next()
-        await message.reply("Может ли этот сотрудник добавлять новых сотрудников? Введите 'ДА' или 'НЕТ'")
+        await message.reply("Введите необходимую информацию о сотруднике (Должность, имя, доп. комментарии)")
     else:
         await message.reply(" Неверно введено имя пользователя или сотрудник не зарегистрирован в боте. Он должен нажать кнопку start или ввести команду /start для регистрации. \n Введите корректное имя пользователя")
+
+@dp.message_handler(state=add_worker.user_data)
+async def add_worker_user_data_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['user_info'] = message.text
+    await add_worker.next()
+    await message.reply("Должен ли сотрудник иметь возможность добавлять новых сотрудников и просматривать данные всех сотрудников? Введите 'ДА' или 'НЕТ'")
 
 @dp.message_handler(state=add_worker.is_superadmin)
 async def add_worker_username_handler(message: types.Message, state: FSMContext):
@@ -462,45 +499,292 @@ async def add_worker_username_handler(message: types.Message, state: FSMContext)
         if message.text == "ДА":
             is_superadmin = 1
             async with state.proxy() as data:
-                db.add_admin(data['user_id'], is_superadmin)
+                db.add_admin(data['user_id'], is_superadmin, data['user_info'])
             await state.finish()
             await message.reply("Сотрудник успешно добавлен. Если админ-панель не появилась, он должен отправить /start боту", reply_markup=keyboard_markup)
         if message.text == "НЕТ":
             is_superadmin = 0
             async with state.proxy() as data:
-                db.add_admin(data['user_id'], is_superadmin)
+                db.add_admin(data['user_id'], is_superadmin, data['user_info'])
             await state.finish()
             await message.reply("Сотрудник успешно добавлен. Если админ-панель не появилась, он должен отправить /start боту", reply_markup=keyboard_markup)
     else:
         await message.reply("Введите 'ДА' или 'НЕТ'")
     
-@dp.message_handler(text = 'Просмотреть или удалить сотрудников')
+@dp.message_handler(text = 'Просмотреть или изменить информацию о сотрудниках')
 async def check_worker_handler(message: types.Message):
+    if db.check_user_is_admin(message.from_user.id):
+        if db.get_super_admin_value(message.from_user.id) == 1:
+            row_count = db.get_count_all_rows_admins()
+            counter = 1
+            answer_text = ''
+            data = db.get_page_db_admins(ADMINS_LIMIT, 0)
+            for user in data:
+                list_user_data = db.get_user_data(user[0])
+                if user[2] is None:
+                    info = "Информация отсутствует"
+                else:
+                    info = user[2]
+                answer_text += '\n' + str(counter) + ". " + "@" + list_user_data['username'] + '\n' + info + '\n'
+                counter += 1
+            inline_keyboard_markup = types.InlineKeyboardMarkup(resize_keyboard=True)
+            if row_count <= ADMINS_LIMIT:
+                inline_keyboard_markup.add(types.InlineKeyboardButton('Изменить информацию о сотруднике', callback_data=change_page_callback.new(offset=ADMINS_LIMIT, action='change_info')))
+                await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+            else:
+                inline_keyboard_markup.add(types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=ADMINS_LIMIT, action='forward')))
+                inline_keyboard_markup.add(types.InlineKeyboardButton('Изменить информацию о сотруднике', callback_data=change_page_callback.new(offset=ADMINS_LIMIT, action='change_info')))
+                await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+        else:
+            await message.reply("У вас нет доступа к этой команде")
+    else:
+        await message.reply("У вас нет доступа к этой команде")
+
+@dp.callback_query_handler(change_page_callback.filter(action = 'forward'))
+async def next_page_admins_query_handler(query: types.CallbackQuery, callback_data : dict):
     row_count = db.get_count_all_rows_admins()
-    counter = 1
+    offset = int(callback_data["offset"])
     answer_text = ''
-    data = db.get_page_db_admins(ADMINS_LIMIT, 0)
+    counter = offset + 1
+    data = db.get_page_db_admins(ADMINS_LIMIT, offset)
     for user in data:
         list_user_data = db.get_user_data(user[0])
-        answer_text += '\n' + str(counter) + ". " + "@" + list_user_data['username'] + '\n'
+        if user[2] is None:
+            info = "Информация отсутствует"
+        else:
+            info = user[2]
+        answer_text += '\n' + str(counter) + ". " + "@" + list_user_data['username'] + '\n' + info + '\n'
         counter += 1
-        inline_keyboard_markup = types.InlineKeyboardMarkup(row_width=3)
-        inline_keyboard_markup.add(types.InlineKeyboardButton('-->', callback_data=str(ADMINS_LIMIT)))
-    if row_count <= ADMINS_LIMIT:
-        await message.answer(answer_text)
+    inline_keyboard_markup = types.InlineKeyboardMarkup(resize_keyboard=True)
+    buttons = [types.InlineKeyboardButton('<--', callback_data=change_page_callback.new(offset=offset - ADMINS_LIMIT, action='back'))]
+    if row_count - offset > ADMINS_LIMIT:
+        buttons.append(types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=offset + ADMINS_LIMIT, action='forward')))
+        inline_keyboard_markup.add(*buttons)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Изменить информацию о сотруднике', callback_data=change_page_callback.new(offset=ADMINS_LIMIT, action='change_info')))
+        await query.answer()
+        await bot.delete_message(query.message.chat.id, query.message.message_id)
+        await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
     else:
-        await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+        inline_keyboard_markup.add(*buttons)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Изменить информацию о сотруднике', callback_data=change_page_callback.new(offset=ADMINS_LIMIT, action='change_info')))
+        await query.answer()
+        await bot.delete_message(query.message.chat.id, query.message.message_id)
+        await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
 
-@dp.callback_query_handler(text = '-->')
-async def next_page_admins_query_handler(query: types.CallbackQuery):
-    row_count = db.get_count_all_rows_admins()
-    limit = 5
-    
+@dp.callback_query_handler(change_page_callback.filter(action = 'back'))
+async def prev_page_admins_query_handler(query: types.CallbackQuery, callback_data : dict):
+    offset = int(callback_data["offset"])
+    answer_text = ''
+    counter = offset + 1
+    data = db.get_page_db_admins(ADMINS_LIMIT, offset)
+    for user in data:
+        list_user_data = db.get_user_data(user[0])
+        if user[2] is None:
+            info = "Информация отсутствует"
+        else:
+            info = user[2]
+        answer_text += '\n' + str(counter) + ". " + "@" + list_user_data['username'] + '\n' + info + '\n'
+        counter += 1
+    buttons = [
+        types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=offset + ADMINS_LIMIT, action='forward')),
+    ]
+    inline_keyboard_markup = types.InlineKeyboardMarkup(resize_keyboard=True)
+    if offset > 0:
+        buttons.insert(0, types.InlineKeyboardButton('<--', callback_data=change_page_callback.new(offset=offset - ADMINS_LIMIT, action='back')))
+        inline_keyboard_markup.add(*buttons)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Изменить информацию о сотруднике', callback_data=change_page_callback.new(offset=ADMINS_LIMIT, action='change_info')))
+        await query.answer()
+        await bot.delete_message(query.message.chat.id, query.message.message_id)
+        await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
+    else:
+        inline_keyboard_markup.add(*buttons)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Изменить информацию о сотруднике', callback_data=change_page_callback.new(offset=ADMINS_LIMIT, action='change_info')))
+        await query.answer()
+        await bot.delete_message(query.message.chat.id, query.message.message_id)
+        await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
+
+@dp.callback_query_handler(change_page_callback.filter(action = 'change_info'))
+async def change_info_admins_query_handler(query: types.CallbackQuery, callback_data : dict):
+    await change_info.username.set()
+    keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
+    keyboard_markup.add(types.KeyboardButton('Отмена'))
+    await bot.send_message(query.from_user.id, "Введите имя пользователя сотрудника, информацию о котором нужно изменить, в формате @DrmyDrmy", reply_markup=keyboard_markup)
+    await query.answer()
+
+@dp.message_handler(lambda message: not (message.text[0] == '@'), state=change_info.username)
+async def change_info_username_incorrect_handler(message: types.Message, state: FSMContext):
+    await message.reply("Имя пользователя должно начинаться с '@'. Введите корректное имя пользователя")
+
+@dp.message_handler(lambda message: message.text[0] == '@', state=change_info.username)
+async def change_info_username_correct_handler(message: types.Message, state: FSMContext):
+    if db.get_user_id_by_username(message.text) != -1:
+        async with state.proxy() as data:
+            data['user_id'] = db.get_user_id_by_username(message.text)
+        await change_info.next()
+        await message.reply("Введите необходимую информацию о сотруднике (Должность, имя, доп. комментарии)")
+    else:
+        await message.reply("Неверно введено имя пользователя. Введите корректное имя пользователя")
+
+@dp.message_handler(state=change_info.info)
+async def change_info_info_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        db.change_info_admins(data['user_id'], message.text)
+    await state.finish()
+    cur_user_data = db.get_user_data(message.from_user.id)
+    keyboard_markup = create_admin_keyboard(cur_user_data)
+    await message.reply("Информация успешно обновлена", reply_markup=keyboard_markup)
+
+@dp.message_handler(text = 'Удалить сотрудника')
+async def delete_user_handler(message: types.Message):
+    if db.check_user_is_admin(message.from_user.id):
+        if db.get_super_admin_value(message.from_user.id) == 1:
+            await delete_user.username.set()
+            keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
+            keyboard_markup.add(types.KeyboardButton('Отмена'))
+            await message.reply('Введите имя пользователя сотрудника, которого нужно удалить, в формате @DrmyDrmy', reply_markup=keyboard_markup)
+        else:
+            await message.reply("У вас нет доступа к этой команде")
+    else:
+        await message.reply("У вас нет доступа к этой команде")
+
+@dp.message_handler(lambda message: not (message.text[0] == '@'), state=delete_user.username)
+async def delete_user_incorrect_handler(message: types.Message, state: FSMContext):
+    await message.reply("Имя пользователя должно начинаться с '@'. Введите корректное имя пользователя")
+
+@dp.message_handler(lambda message: message.text[0] == '@', state=delete_user.username)
+async def delete_user_correct_handler(message: types.Message, state: FSMContext):
+    if db.get_user_id_by_username(message.text) != -1:
+        async with state.proxy() as data:
+            data['user_id'] = db.get_user_id_by_username(message.text)
+        await delete_user.next()
+        await message.reply("Подтвердите удаление. Введите 'ДА' для продолжения, или нажмите 'Отмена'")
+    else:
+        await message.reply("Неверно введено имя пользователя. Введите корректное имя пользователя")
+
+@dp.message_handler(lambda message: message.text == "ДА", state=delete_user.confirmation)
+async def delete_user_confirmed_handler(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        db.delete_admin(data['user_id'])
+    await state.finish()
+    cur_user_data = db.get_user_data(message.from_user.id)
+    keyboard_markup = create_admin_keyboard(cur_user_data)
+    await message.reply("Сотрудник удален.", reply_markup=keyboard_markup)
+
+@dp.message_handler(text = 'Просмотреть все заказы')
+async def check_all_orders_handler(message: types.Message):
+    if db.check_user_is_admin(message.from_user.id):
+        row_count = db.get_count_all_rows_orders()
+        answer_text = ''
+        data = db.get_page_db_orders(ORDERS_LIMIT, 0)
+        for order in data:
+            answer_text += '\n' + str(order[0]) + ". " + order[1] + '\n' + order[8] + '\n'
+        inline_keyboard_markup = types.InlineKeyboardMarkup(resize_keyboard=True)
+        if row_count <= ORDERS_LIMIT:
+            inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+            await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+        else:
+            inline_keyboard_markup.add(types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='forward_order')))
+            inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+            await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+    else:
+        await message.reply("У вас нет доступа к этой команде")
+
+@dp.callback_query_handler(change_page_callback.filter(action = 'forward_order'))
+async def next_page_orders_query_handler(query: types.CallbackQuery, callback_data : dict):
+    row_count = db.get_count_all_rows_orders()
+    offset = int(callback_data["offset"])
+    answer_text = ''
+    data = db.get_page_db_orders(ORDERS_LIMIT, offset)
+    for order in data:
+        answer_text += '\n' + str(order[0]) + ". " + order[1] + '\n' + order[8] + '\n'
+    inline_keyboard_markup = types.InlineKeyboardMarkup(resize_keyboard=True)
+    buttons = [types.InlineKeyboardButton('<--', callback_data=change_page_callback.new(offset=offset - ORDERS_LIMIT, action='back_order'))]
+    if row_count - offset > ORDERS_LIMIT:
+        buttons.append(types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=offset + ORDERS_LIMIT, action='forward_order')))
+        inline_keyboard_markup.add(*buttons)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+        await query.answer()
+        await bot.delete_message(query.message.chat.id, query.message.message_id)
+        await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
+    else:
+        inline_keyboard_markup.add(*buttons)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+        await query.answer()
+        await bot.delete_message(query.message.chat.id, query.message.message_id)
+        await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
+
+@dp.callback_query_handler(change_page_callback.filter(action = 'back_order'))
+async def prev_page_orders_query_handler(query: types.CallbackQuery, callback_data : dict):
+    offset = int(callback_data["offset"])
+    answer_text = ''
+    data = db.get_page_db_orders(ORDERS_LIMIT, offset)
+    for order in data:
+        answer_text += '\n' + str(order[0]) + ". " + order[1] + '\n' + order[8] + '\n'
+    buttons = [
+        types.InlineKeyboardButton('-->', callback_data=change_page_callback.new(offset=offset + ORDERS_LIMIT, action='forward_order')),
+    ]
+    inline_keyboard_markup = types.InlineKeyboardMarkup(resize_keyboard=True)
+    if offset > 0:
+        buttons.insert(0, types.InlineKeyboardButton('<--', callback_data=change_page_callback.new(offset=offset - ORDERS_LIMIT, action='back_order')))
+        inline_keyboard_markup.add(*buttons)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+        await query.answer()
+        await bot.delete_message(query.message.chat.id, query.message.message_id)
+        await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
+    else:
+        inline_keyboard_markup.add(*buttons)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('Подробнее о заказе', callback_data=change_page_callback.new(offset=ORDERS_LIMIT, action='view_order')))
+        await query.answer()
+        await bot.delete_message(query.message.chat.id, query.message.message_id)
+        await bot.send_message(query.from_user.id, answer_text, reply_markup=inline_keyboard_markup)
+
+@dp.callback_query_handler(change_page_callback.filter(action = 'view_order'))
+async def view_orders_query_handler(query: types.CallbackQuery, callback_data : dict):
+    await query.answer()
+    await view_order.view.set()
+    keyboard_markup = types.ReplyKeyboardMarkup(row_width = 1, resize_keyboard=True)
+    keyboard_markup.add(types.KeyboardButton('Отмена'))
+    await bot.send_message(query.from_user.id, "Введите номер заказа", reply_markup=keyboard_markup)
+
+@dp.message_handler(lambda message: not (message.text.isdigit()), state=view_order.view)
+async def view_order_correct_handler(message: types.Message, state: FSMContext):
+    await message.reply("Номер заказа должен быть цифрой. Введите корректный номер заказа")
+
+@dp.message_handler(lambda message: message.text.isdigit(), state=view_order.view)
+async def view_order_correct_handler(message: types.Message, state: FSMContext):
+    if db.check_order_exists(int(message.text)):
+        cur_user_data = db.get_user_data(message.from_user.id)
+        keyboard_markup = create_admin_keyboard(cur_user_data)
+        answer_text = ''
+        order_data = db.get_order_data(int(message.text))
+        order_sum_data = divide_money(order_data[6], order_data[5])
+        if order_data[7] is None:
+            inviter = "Пригласитель отсутствует"
+        else:
+            inviter_data = db.get_user_data(order_data[7])
+            inviter = "Пригласитель: " + "@" + inviter_data['username'] + "\n" + "Банк пригласителя: " + inviter_data['payment_method'] + "\n" + "Платежные данные пригласителя: " + inviter_data['payment_data']
+        answer_text += "Номер: " + str(order_data[0]) + "\n"
+        answer_text += "Название: " + order_data[1] + "\n"
+        answer_text += "Дата: " + order_data[8] + "\n"
+        answer_text += "Исполнитель: " + "@" + order_data[2] + "\n"
+        answer_text += "Заказчик: " + "@" + order_data[3] + "\n"
+        answer_text += "Сотрудник: " + "@" + order_data[4] + "\n"
+        answer_text += "Процентная ставка системы: " + str(order_data[5]) + "%" + "\n"
+        answer_text += "Оплата заказа: " + str(order_data[6]) + "\n"
+        answer_text += "Сумма для главного и ближайшего порядка: " + str(order_sum_data['sum_for_boss_and_first']) + "\n"
+        answer_text += "Сумма для пригласителя: " + str(order_sum_data['inviter_sum']) + "\n"
+        answer_text += "Сумма для всех остальных сотрудников: " + str(order_sum_data['others_sum']) + '\n'
+        answer_text += inviter
+        await state.finish()
+        await message.reply(answer_text, reply_markup=keyboard_markup)
+    else:
+        await message.reply("Заказа с таким номером не существует. Введите корректный номер заказа")
 
 # Default handler
 @dp.message_handler()
 async def echo(message: types.Message):
     await message.answer("Пожалуйста введите корректную команду или отправьте /start для вызова меню")
+    
 
 # Polling start
 if __name__ == '__main__':
