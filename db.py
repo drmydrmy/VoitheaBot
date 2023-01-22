@@ -152,3 +152,48 @@ def delete_order(order_id):
     query = "DELETE FROM orders WHERE id = ?"
     cur.execute(query, (order_id,))
     con.commit()
+
+def alias_to_id(alias):
+    query = "SELECT * FROM aliases WHERE alias = ?"
+    res = cur.execute(query, (alias,))
+    res = res.fetchone()
+    if res is None:
+        return(-1)
+    else: 
+        return(res[0])
+
+def change_alias(user_id, new_alias):
+    query = "SELECT * FROM aliases WHERE user_id = ?"
+    res = cur.execute(query, (user_id,))
+    res = res.fetchone()
+    if res is None:
+        query = "INSERT OR IGNORE INTO aliases VALUES (?, ?)"
+        cur.execute(query, (user_id, new_alias))
+    else: 
+        query = "UPDATE aliases SET alias = ? WHERE user_id = ?"
+        cur.execute(query, (new_alias, user_id))
+    con.commit()
+
+def id_to_alias(user_id):
+    query = "SELECT * FROM aliases WHERE user_id = ?"
+    res = cur.execute(query, (user_id,))
+    res = res.fetchone()
+    if res is None:
+        return -1
+    else:
+        return res[1]
+
+def fetch_all_prices():
+    query = "SELECT * FROM prices"
+    res = cur.execute(query)
+    res = res.fetchall()
+    if res is None:
+        return -1
+    else:
+        return(res)
+
+def get_count_orders_by(username):
+    query = "SELECT COUNT(*) FROM orders WHERE client = ?"
+    res = cur.execute(query, (username,))
+    res = res.fetchone()[0]
+    return res
