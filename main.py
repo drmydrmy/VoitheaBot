@@ -20,7 +20,7 @@ ORDERS_LIMIT = 4
 logging.basicConfig(level=logging.INFO)
 
 def create_main_keyboard(user_data):
-    welcome_btns_text = ('📝Посмотреть прайс-услуг.', '☎️Контакты для оформления заказа.', '📩Получить ссылку.',  '✨Сделать свою ссылку уникальной.')
+    welcome_btns_text = ('📝Посмотреть прайс-услуг.', '☎️Контакты для оформления заказа.', '📩Получить ссылку.',  '✨Сделать свою ссылку уникальной.', '💰Запросить выплату за приглашенных пользователей')
     if user_data['payment_method'] == '' and user_data['payment_data'] == '':
         welcome_btns_text = welcome_btns_text + ('💸Добавить реквизиты.',)
     else:
@@ -124,6 +124,14 @@ async def send_welcome(message: types.Message):
                     if db.check_user_exists(int(args)):
                         if not (db.check_inviter_is_invited(message.from_user.id, int(args))):
                             if not (message.from_user.id == int(args)):
+                                inviter_data = db.get_user_data(int(args))
+                                db.init_payout_orders(inviter_data["username"])
+                                payout_order_data = db.get_payout_order_data(inviter_data["username"])
+                                if payout_order_data["open"] == "NO":
+                                    payout_order_data["invited"] += 1
+                                else:
+                                    payout_order_data["new_invited"] += 1
+                                db.update_payout_order_data(inviter_data["username"], payout_order_data['invited'], payout_order_data['open'], payout_order_data['new_invited'])
                                 db.add_user_invited_by(int(args), message.from_user.id)
                                 await message.answer("Пригласитель успешно связан с вашим аккаунтом")
                             else:
@@ -135,6 +143,14 @@ async def send_welcome(message: types.Message):
                 else:
                     if not (db.check_inviter_is_invited(message.from_user.id, db.alias_to_id(args))):
                             if not (message.from_user.id == db.alias_to_id(args)):
+                                inviter_data = db.get_user_data(db.alias_to_id(args))
+                                db.init_payout_orders(inviter_data["username"])
+                                payout_order_data = db.get_payout_order_data(inviter_data["username"])
+                                if payout_order_data["open"] == "NO":
+                                    payout_order_data["invited"] += 1
+                                else:
+                                    payout_order_data["new_invited"] += 1
+                                db.update_payout_order_data(inviter_data["username"], payout_order_data['invited'], payout_order_data['open'], payout_order_data['new_invited'])
                                 db.add_user_invited_by(db.alias_to_id(args), message.from_user.id)
                                 await message.answer("Пригласитель успешно связан с вашим аккаунтом")
                             else:
@@ -317,6 +333,45 @@ async def check_change_payment_data(message: types.Message):
             await message.answer(answer_text, reply_markup= keyboard_markup)
             return
         await message.answer(answer_text, reply_markup=inline_keyboard_markup)
+
+@dp.message_handler(text = "💰Запросить выплату за приглашенных пользователей")
+async def request_payout_order(message: types.Message):
+    user_data = db.get_user_data(message.from_user.id)
+    db.init_payout_orders(user_data['username'])
+    payout_order_data = db.get_payout_order_data(user_data['username'])
+    if payout_order_data["open"] == "YES":
+        await message.reply("Ваш прошлый запрос еще не обработан. Пожалуйста, дождитесь предыдущей выплаты")
+        return
+    if payout_order_data["open"] == "NO" and payout_order_data["invited"] < 6:
+        await message.reply("Минимальная сумма для вывода 55 рублей.\nУспехов в заработках!")
+        return
+    if payout_order_data["open"] == "NO" and payout_order_data["invited"] >= 6:
+        inline_keyboard_markup = types.InlineKeyboardMarkup(row_width=1)
+        inline_keyboard_markup.add(types.InlineKeyboardButton('✅Пометить как выполненный', callback_data='complete_payout_order'))
+        await message.reply("Запрос успешно создан")
+        payout_order_data["open"] = "YES"
+        db.update_payout_order_data(payout_order_data['username'], payout_order_data['invited'], payout_order_data['open'], payout_order_data['new_invited'])
+        message_text = "*Новый ордер на выплату*\n Пользователь: " + "@" + payout_order_data['username'] + "\n Банк: " + user_data['payment_method'] + "\n Реквизиты: " + user_data["payment_data"] + "\n Сумма: " + str(payout_order_data['invited'] *  10) + " руб\."
+        await bot.send_message(5359797877, message_text, parse_mode='MarkdownV2', reply_markup=inline_keyboard_markup)
+
+@dp.callback_query_handler(text='complete_payout_order')
+async def complete_payout_order_query_handler(query: types.CallbackQuery):
+    at_position = query.message.text.find('@')
+    end_position = query.message.text.find('\n', at_position)
+    username = query.message.text[at_position+1:end_position]
+    await query.answer()
+    payout_order_data = db.get_payout_order_data(username)
+    if payout_order_data["open"] == "NO":
+        await bot.send_message(query.from_user.id, "Ордер уже помечен как выполненный")
+    else:
+        payout_order_data['invited'] = payout_order_data['new_invited']
+        payout_order_data['new_invited'] = 0
+        payout_order_data['open'] = "NO"
+        user_id = db.get_user_id_by_username("@" + username)
+        db.update_payout_order_data(username, payout_order_data['invited'], payout_order_data['open'], payout_order_data['new_invited'])
+        await bot.send_message(user_id, "Ваш запрос на выплату исполнен!")
+        await bot.send_message(query.from_user.id, "Ордер помечен как исполненный, пользователю отправлено уведомление")
+
 
 # Inline KB callback handler (payment_method)
 @dp.callback_query_handler(text='payment_method')

@@ -197,3 +197,24 @@ def get_count_orders_by(username):
     res = cur.execute(query, (username,))
     res = res.fetchone()[0]
     return res
+
+def init_payout_orders(username):
+    query = "INSERT OR IGNORE INTO payout_orders VALUES (?, ?, ?, ?)"
+    cur.execute(query, (username, 0, "NO", 0))
+    con.commit()
+
+def get_payout_order_data(username):
+    query = "SELECT * FROM payout_orders WHERE username = ?"
+    res = cur.execute(query, (username,))
+    payout_order_data_tuple = res.fetchone()
+    return {
+        "username" : payout_order_data_tuple[0],
+        "invited" : payout_order_data_tuple[1],
+        "open" : payout_order_data_tuple[2],
+        "new_invited" : payout_order_data_tuple[3]                                   
+    }
+
+def update_payout_order_data(username, invited, open, new_invited):
+    query = "UPDATE payout_orders SET invited = ?, open = ?, new_invited = ? WHERE username = ?"
+    cur.execute(query,(invited, open, new_invited, username))
+    con.commit()
