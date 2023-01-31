@@ -354,6 +354,7 @@ async def request_payout_order(message: types.Message):
         message_text = "*Новый ордер на выплату*\n Пользователь: " + "@" + payout_order_data['username'] + "\n Банк: " + user_data['payment_method'] + "\n Реквизиты: " + user_data["payment_data"] + "\n Сумма: " + str(payout_order_data['invited'] *  10) + " руб\."
         await bot.send_message(5359797877, message_text, parse_mode='MarkdownV2', reply_markup=inline_keyboard_markup)
 
+# Inline complete payout order callback handler
 @dp.callback_query_handler(text='complete_payout_order')
 async def complete_payout_order_query_handler(query: types.CallbackQuery):
     at_position = query.message.text.find('@')
