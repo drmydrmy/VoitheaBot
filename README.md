@@ -1,5 +1,5 @@
-# A telegram bot for Voithea 
-A fully asynchronous telegram bot that was made for a now defunct project named Voithea. <br />
+# A Telegram bot for Voithea 
+A fully asynchronous Telegram bot that was made for a now defunct project named Voithea. <br />
 It's built using Aiogram as the framework and PostgreSQL as its database<br />
 It uses an authentication system based on Telegram user ids and has a referral system. <br />
 Users can:
