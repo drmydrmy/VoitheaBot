@@ -1,5 +1,6 @@
-# A telegram bot for Voithea
-This telegram bot was made for a now defunct project named Voithea. It's built using Aiogram as the framework <br />
+# A telegram bot for Voithea 
+This telegram bot was made for a now defunct project named Voithea. <br />
+It's built using Aiogram as the framework and PostgreSQL as its database<br />
 It uses an authentication system based on Telegram user ids and has a referral system. <br />
 Users can:
 - Place orders
